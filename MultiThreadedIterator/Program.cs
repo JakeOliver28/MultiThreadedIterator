@@ -26,46 +26,33 @@ class Program
 		return sb.ToString();
 	}
 
-	private static async Task<ConcurrentDictionary<string, string>> ProcessDirectory(string directoryPath)
+	private static async Task ProcessDirectory(string directoryPath, ConcurrentDictionary<string, string> output)
 	{
-		var directoryContent = new ConcurrentDictionary<string, string>();
-
 		foreach (string file in Directory.EnumerateFiles(directoryPath))
 		{
-			directoryContent[file] = await ReadFile(file);
+			output[file] = await ReadFile(file);
 		}
-
-		return directoryContent;
 	}
 
-	private static void Main()
+	private static async Task Main()
 	{
 
 		Console.WriteLine("Enter directory paths to be iterated:");
-
-		// Allow input
 		string input = Console.ReadLine() ?? string.Empty;
 
-		// Process input
 		string[] directories = input.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
-
-		// Create a ConcurrentQueue to hold the directories
-		var directoryQueue = new ConcurrentQueue<string>(directories);
 
 		// Create output data structure to print contents
 		var output = new ConcurrentDictionary<string, string>();
+		var tasks = new List<Task>();
 
 		// Iterate through the directories and add content to the data structure
-		Parallel.ForEach(directoryQueue, (directory) =>
+		foreach (var directory in directories)
 		{
-			// Simulate processing of each directory
-			Console.WriteLine($"Processing directory: {directory}");
-			var directoryContent = ProcessDirectory(directory).Result;
-			foreach (var kvp in directoryContent)
-			{
-				output[kvp.Key] = kvp.Value;
-			}
-		});
+			tasks.Add(ProcessDirectory(directory, output));
+		}
+
+		await Task.WhenAll(tasks);
 
 		// Print content of directories
 		foreach (var kvp in output)
