@@ -13,15 +13,20 @@ class Program
 		var output = new ConcurrentDictionary<string, string>();
 		var fileQueue = new ConcurrentQueue<string>();
 		var threads = new List<Thread>();
+		var countdown = new CountdownEvent(directories.Length);
 
 		using (var cts = new CancellationTokenSource())
 		{
-			var printThread = new Thread(() => PrintOutput(output, fileQueue, cts.Token));
+			var printThread = new Thread(() => PrintOutput(output, fileQueue, cts.Token, countdown));
 			printThread.Start();
 
 			foreach (var directory in directories)
 			{
-				var thread = new Thread(() => ProcessDirectory(directory, output, fileQueue));
+				var thread = new Thread(() =>
+				{
+					ProcessDirectory(directory, output, fileQueue);
+					countdown.Signal();
+				});
 				thread.Start();
 				threads.Add(thread);
 			}
@@ -31,31 +36,9 @@ class Program
 				thread.Join();
 			}
 
+			countdown.Wait();
 			cts.Cancel();
 			printThread.Join();
-		}
-	}
-
-	private static void ProcessDirectory(string directoryPath, ConcurrentDictionary<string, string> output, ConcurrentQueue<string> fileQueue)
-	{
-		foreach (string file in Directory.EnumerateFiles(directoryPath))
-		{
-			var content = File.ReadAllText(file);
-			output[file] = content;
-			fileQueue.Enqueue(file);
-		}
-	}
-
-	private static void PrintOutput(ConcurrentDictionary<string, string> output, ConcurrentQueue<string> fileQueue, CancellationToken token)
-	{
-		while (!token.IsCancellationRequested || !fileQueue.IsEmpty)
-		{
-			while (fileQueue.TryDequeue(out string? filePath))
-			{
-				Console.WriteLine($"File: {filePath}");
-				Console.WriteLine(output[filePath]);
-			}
-			Thread.Sleep(200); // Reduce CPU usage by checking periodically
 		}
 	}
 
@@ -77,5 +60,28 @@ class Program
 		}
 
 		return directories;
+	}
+
+	private static void ProcessDirectory(string directoryPath, ConcurrentDictionary<string, string> output, ConcurrentQueue<string> fileQueue)
+	{
+		foreach (string file in Directory.EnumerateFiles(directoryPath))
+		{
+			var content = File.ReadAllText(file);
+			output[file] = content;
+			fileQueue.Enqueue(file);
+		}
+	}
+
+	private static void PrintOutput(ConcurrentDictionary<string, string> output, ConcurrentQueue<string> fileQueue, CancellationToken token, CountdownEvent countdown)
+	{
+		while (!token.IsCancellationRequested || !fileQueue.IsEmpty || countdown.CurrentCount > 0)
+		{
+			while (fileQueue.TryDequeue(out string? filePath))
+			{
+				Console.WriteLine($"File: {filePath}");
+				Console.WriteLine(output[filePath]);
+			}
+			Thread.Sleep(200); // Reduce CPU usage by checking periodically
+		}
 	}
 }
