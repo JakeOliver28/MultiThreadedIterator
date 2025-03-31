@@ -6,7 +6,6 @@ using System.Text;
 
 class Program
 {
-
 	private static async Task<string> ReadFile(string filePath)
 	{
 		var sb = new StringBuilder();
@@ -34,31 +33,66 @@ class Program
 		}
 	}
 
+	private static void PrintOutput(ConcurrentDictionary<string, string> output, CancellationToken token)
+	{
+		var printedFiles = new ConcurrentBag<string>();
+
+		while (!token.IsCancellationRequested || output.Count > printedFiles.Count)
+		{
+			foreach (var kvp in output)
+			{
+				if (!printedFiles.Contains(kvp.Key))
+				{
+					Console.WriteLine($"File: {kvp.Key}");
+					Console.WriteLine(kvp.Value);
+					printedFiles.Add(kvp.Key);
+				} 
+			}
+			Thread.Sleep(500); // Reduce CPU usage by checking periodically
+		}
+	}
+
+	private static string[] ValidateDirectoryInput()
+	{
+		string[] directories = Array.Empty<string>();
+		bool isValidInput = false;
+		Console.WriteLine("Enter directory paths to be iterated (separated by space or comma):");
+		
+		while (!isValidInput)
+		{
+			string input = Console.ReadLine() ?? string.Empty;
+			directories = input.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+			isValidInput = directories.All(Directory.Exists);
+			if (!isValidInput)
+			{
+				Console.WriteLine("One or more directories do not exist. Please try again.");
+			}
+		}
+
+		return directories;
+	}
+
 	private static async Task Main()
 	{
+		string[] directories = ValidateDirectoryInput();
 
-		Console.WriteLine("Enter directory paths to be iterated:");
-		string input = Console.ReadLine() ?? string.Empty;
-
-		string[] directories = input.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
-
-		// Create output data structure to print contents
 		var output = new ConcurrentDictionary<string, string>();
 		var tasks = new List<Task>();
 
-		// Iterate through the directories and add content to the data structure
-		foreach (var directory in directories)
+		using (var cts = new CancellationTokenSource())
 		{
-			tasks.Add(ProcessDirectory(directory, output));
-		}
+			var printThread = new Thread(() => PrintOutput(output, cts.Token));
+			printThread.Start();
 
-		await Task.WhenAll(tasks);
+			foreach (var directory in directories)
+			{
+				tasks.Add(ProcessDirectory(directory, output));
+			}
 
-		// Print content of directories
-		foreach (var kvp in output)
-		{
-			Console.WriteLine($"File: {kvp.Key}");
-			Console.WriteLine(kvp.Value);
+			await Task.WhenAll(tasks);
+
+			cts.Cancel();
+			printThread.Join();
 		}
 	}
 
