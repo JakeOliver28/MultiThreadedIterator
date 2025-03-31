@@ -6,49 +6,56 @@ using System.Text;
 
 class Program
 {
-	private static async Task<string> ReadFile(string filePath)
+	private static void Main()
 	{
-		var sb = new StringBuilder();
+		string[] directories = ValidateDirectoryInput();
 
-		using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous))
+		var output = new ConcurrentDictionary<string, string>();
+		var fileQueue = new ConcurrentQueue<string>();
+		var threads = new List<Thread>();
+
+		using (var cts = new CancellationTokenSource())
 		{
-			using (StreamReader reader = new StreamReader(fs))
-			{
-				string? line;
-				while ((line = await reader.ReadLineAsync()) != null)
-				{
-					sb.AppendLine(line);
-				}
-			}
-		}
+			var printThread = new Thread(() => PrintOutput(output, fileQueue, cts.Token));
+			printThread.Start();
 
-		return sb.ToString();
+			foreach (var directory in directories)
+			{
+				var thread = new Thread(() => ProcessDirectory(directory, output, fileQueue));
+				thread.Start();
+				threads.Add(thread);
+			}
+
+			foreach (var thread in threads)
+			{
+				thread.Join();
+			}
+
+			cts.Cancel();
+			printThread.Join();
+		}
 	}
 
-	private static async Task ProcessDirectory(string directoryPath, ConcurrentDictionary<string, string> output)
+	private static void ProcessDirectory(string directoryPath, ConcurrentDictionary<string, string> output, ConcurrentQueue<string> fileQueue)
 	{
 		foreach (string file in Directory.EnumerateFiles(directoryPath))
 		{
-			output[file] = await ReadFile(file);
+			var content = File.ReadAllText(file);
+			output[file] = content;
+			fileQueue.Enqueue(file);
 		}
 	}
 
-	private static void PrintOutput(ConcurrentDictionary<string, string> output, CancellationToken token)
+	private static void PrintOutput(ConcurrentDictionary<string, string> output, ConcurrentQueue<string> fileQueue, CancellationToken token)
 	{
-		var printedFiles = new ConcurrentBag<string>();
-
-		while (!token.IsCancellationRequested || output.Count > printedFiles.Count)
+		while (!token.IsCancellationRequested || !fileQueue.IsEmpty)
 		{
-			foreach (var kvp in output)
+			while (fileQueue.TryDequeue(out string? filePath))
 			{
-				if (!printedFiles.Contains(kvp.Key))
-				{
-					Console.WriteLine($"File: {kvp.Key}");
-					Console.WriteLine(kvp.Value);
-					printedFiles.Add(kvp.Key);
-				} 
+				Console.WriteLine($"File: {filePath}");
+				Console.WriteLine(output[filePath]);
 			}
-			Thread.Sleep(500); // Reduce CPU usage by checking periodically
+			Thread.Sleep(200); // Reduce CPU usage by checking periodically
 		}
 	}
 
@@ -71,29 +78,4 @@ class Program
 
 		return directories;
 	}
-
-	private static async Task Main()
-	{
-		string[] directories = ValidateDirectoryInput();
-
-		var output = new ConcurrentDictionary<string, string>();
-		var tasks = new List<Task>();
-
-		using (var cts = new CancellationTokenSource())
-		{
-			var printThread = new Thread(() => PrintOutput(output, cts.Token));
-			printThread.Start();
-
-			foreach (var directory in directories)
-			{
-				tasks.Add(ProcessDirectory(directory, output));
-			}
-
-			await Task.WhenAll(tasks);
-
-			cts.Cancel();
-			printThread.Join();
-		}
-	}
-
 }
